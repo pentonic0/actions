@@ -4,15 +4,16 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-av1:
+  build-av1-decoder:
     runs-on: ubuntu-latest
 
     steps:
       - name: Install system tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y git python3 python3-pip ninja-build nasm curl unzip
-          pip3 install --user meson
+          sudo apt-get install -y git curl unzip python3 python3-pip ninja-build nasm
+          python3 -m pip install --user meson
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
@@ -33,30 +34,45 @@ jobs:
         run: |
           git clone --depth 1 --branch release https://github.com/androidx/media.git media
 
-      - name: Fetch dav1d
+      - name: Fetch cpu_features and dav1d
         run: |
           cd media/libraries/decoder_av1/src/main/jni
-          git clone --depth 1 https://code.videolan.org/videolan/dav1d.git
+
+          if [ ! -d "cpu_features" ]; then
+            git clone --depth 1 https://github.com/google/cpu_features.git cpu_features
+          fi
+
+          if [ ! -d "dav1d" ]; then
+            git clone --depth 1 https://code.videolan.org/videolan/dav1d.git dav1d
+          fi
 
       - name: Build dav1d native libraries
         run: |
-          cd media/libraries/decoder_av1/src/main/jni
-          chmod +x build_dav1d.sh
-          ./build_dav1d.sh
+          cd media
 
-      - name: Build AV1 decoder AAR
+          AV1_MODULE_PATH="$(pwd)/libraries/decoder_av1/src/main"
+          NDK_PATH="$ANDROID_NDK_HOME"
+          HOST_PLATFORM="linux-x86_64"
+
+          cd "$AV1_MODULE_PATH/jni"
+          chmod +x build_dav1d.sh
+
+          ./build_dav1d.sh "$AV1_MODULE_PATH" "$NDK_PATH" "$HOST_PLATFORM"
+
+      - name: Build Media3 AV1 decoder AAR
         run: |
           cd media
           chmod +x gradlew
           ./gradlew :libraries:decoder_av1:assembleRelease --no-daemon --stacktrace
 
-      - name: Collect AAR
+      - name: Collect AAR artifact
         run: |
           mkdir -p out
           find media/libraries/decoder_av1/build/outputs/aar -name "*.aar" -exec cp {} out/ \;
-          ls -la out
+          echo "Generated files:"
+          ls -lah out
 
-      - name: Upload AV1 decoder artifact
+      - name: Upload AV1 decoder AAR
         uses: actions/upload-artifact@v4
         with:
           name: media3-av1-decoder-aar
