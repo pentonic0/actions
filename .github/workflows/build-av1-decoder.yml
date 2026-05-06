@@ -59,26 +59,59 @@ jobs:
 
           ./build_dav1d.sh "$AV1_MODULE_PATH" "$NDK_PATH" "$HOST_PLATFORM"
 
-      - name: Show available Gradle projects
+      - name: Show available Gradle projects and AV1 tasks
         run: |
           cd media
+          chmod +x gradlew
           ./gradlew projects --no-daemon
+          ./gradlew :lib-decoder-av1:tasks --all --no-daemon
 
       - name: Build Media3 AV1 decoder AAR
         run: |
           cd media
-          chmod +x gradlew
-          ./gradlew :lib-decoder-av1:assembleRelease --no-daemon --stacktrace
+
+          echo "Trying assembleRelease..."
+          if ./gradlew :lib-decoder-av1:assembleRelease --no-daemon --stacktrace; then
+            echo "assembleRelease succeeded"
+          else
+            echo "assembleRelease failed. Trying bundleReleaseAar..."
+            ./gradlew :lib-decoder-av1:bundleReleaseAar --no-daemon --stacktrace
+          fi
+
+      - name: Debug find all AAR files
+        if: always()
+        run: |
+          echo "Searching all AAR files..."
+          find media -name "*.aar" -type f -print || true
+
+          echo "Searching build output files..."
+          find media -path "*/build/outputs/*" -type f -print || true
 
       - name: Collect AAR artifact
         run: |
           mkdir -p out
-          find media -path "*/build/outputs/aar/*.aar" -print -exec cp {} out/ \;
-          echo "Generated files:"
+
+          echo "Finding AAR files..."
+          AAR_FILES=$(find media -name "*.aar" -type f || true)
+
+          if [ -z "$AAR_FILES" ]; then
+            echo "No AAR files found!"
+            echo "Available build output files:"
+            find media -path "*/build/outputs/*" -type f -print || true
+            exit 1
+          fi
+
+          echo "$AAR_FILES"
+
+          while IFS= read -r file; do
+            cp "$file" out/
+          done <<< "$AAR_FILES"
+
+          echo "Copied artifacts:"
           ls -lah out
 
       - name: Upload AV1 decoder AAR
         uses: actions/upload-artifact@v4
         with:
           name: media3-av1-decoder-aar
-          path: out/*.aar
+          path: out/
