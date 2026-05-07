@@ -1,19 +1,17 @@
-name: Build Media3 AV1 Decoder AAR
+name: Build Media3 FFmpeg Decoder AAR
 
 on:
   workflow_dispatch:
 
 jobs:
-  build-av1-decoder:
+  build-ffmpeg-decoder:
     runs-on: ubuntu-latest
 
     steps:
       - name: Install system tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y git curl unzip python3 python3-pip ninja-build nasm
-          python3 -m pip install --user meson
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
+          sudo apt-get install -y git curl unzip autoconf automake libtool make pkg-config cmake ninja-build yasm nasm python3
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
@@ -34,48 +32,68 @@ jobs:
         run: |
           git clone --depth 1 --branch release https://github.com/androidx/media.git media
 
-      - name: Fetch cpu_features and dav1d
+      - name: Fetch FFmpeg source
         run: |
-          cd media/libraries/decoder_av1/src/main/jni
+          cd media/libraries/decoder_ffmpeg/src/main/jni
 
-          if [ ! -d "cpu_features" ]; then
-            git clone --depth 1 https://github.com/google/cpu_features.git cpu_features
+          if [ ! -d "ffmpeg" ]; then
+            git clone --depth 1 --branch n6.0 https://github.com/FFmpeg/FFmpeg.git ffmpeg
           fi
 
-          if [ ! -d "dav1d" ]; then
-            git clone --depth 1 https://code.videolan.org/videolan/dav1d.git dav1d
-          fi
-
-      - name: Build dav1d native libraries
+      - name: Build FFmpeg native libraries
         run: |
           cd media
 
-          AV1_MODULE_PATH="$(pwd)/libraries/decoder_av1/src/main"
+          FFMPEG_MODULE_PATH="$(pwd)/libraries/decoder_ffmpeg/src/main"
           NDK_PATH="$ANDROID_NDK_HOME"
           HOST_PLATFORM="linux-x86_64"
+          ANDROID_ABI="21"
 
-          cd "$AV1_MODULE_PATH/jni"
-          chmod +x build_dav1d.sh
+          ENABLED_DECODERS=(
+            aac
+            ac3
+            eac3
+            dca
+            truehd
+            mlp
+            mp3
+            flac
+            alac
+            vorbis
+            opus
+            amrnb
+            amrwb
+            pcm_alaw
+            pcm_mulaw
+          )
 
-          ./build_dav1d.sh "$AV1_MODULE_PATH" "$NDK_PATH" "$HOST_PLATFORM"
+          cd "$FFMPEG_MODULE_PATH/jni"
+          chmod +x build_ffmpeg.sh
 
-      - name: Show available Gradle projects and AV1 tasks
+          ./build_ffmpeg.sh \
+            "$FFMPEG_MODULE_PATH" \
+            "$NDK_PATH" \
+            "$HOST_PLATFORM" \
+            "$ANDROID_ABI" \
+            "${ENABLED_DECODERS[@]}"
+
+      - name: Show available Gradle projects and FFmpeg tasks
         run: |
           cd media
           chmod +x gradlew
           ./gradlew projects --no-daemon
-          ./gradlew :lib-decoder-av1:tasks --all --no-daemon
+          ./gradlew :lib-decoder-ffmpeg:tasks --all --no-daemon
 
-      - name: Build Media3 AV1 decoder AAR
+      - name: Build Media3 FFmpeg decoder AAR
         run: |
           cd media
 
           echo "Trying assembleRelease..."
-          if ./gradlew :lib-decoder-av1:assembleRelease --no-daemon --stacktrace; then
+          if ./gradlew :lib-decoder-ffmpeg:assembleRelease --no-daemon --stacktrace; then
             echo "assembleRelease succeeded"
           else
             echo "assembleRelease failed. Trying bundleReleaseAar..."
-            ./gradlew :lib-decoder-av1:bundleReleaseAar --no-daemon --stacktrace
+            ./gradlew :lib-decoder-ffmpeg:bundleReleaseAar --no-daemon --stacktrace
           fi
 
       - name: Debug find all AAR files
@@ -91,12 +109,16 @@ jobs:
         run: |
           mkdir -p out
 
-          echo "Finding AAR files..."
-          AAR_FILES=$(find media -name "*.aar" -type f || true)
+          echo "Finding FFmpeg AAR files..."
+          AAR_FILES=$(find media -name "*.aar" -type f | grep -i "ffmpeg" || true)
+
+          if [ -z "$AAR_FILES" ]; then
+            echo "No FFmpeg AAR files found. Trying all AAR files..."
+            AAR_FILES=$(find media -name "*.aar" -type f || true)
+          fi
 
           if [ -z "$AAR_FILES" ]; then
             echo "No AAR files found!"
-            echo "Available build output files:"
             find media -path "*/build/outputs/*" -type f -print || true
             exit 1
           fi
@@ -110,8 +132,8 @@ jobs:
           echo "Copied artifacts:"
           ls -lah out
 
-      - name: Upload AV1 decoder AAR
+      - name: Upload FFmpeg decoder AAR
         uses: actions/upload-artifact@v4
         with:
-          name: media3-av1-decoder-aar
+          name: media3-ffmpeg-decoder-aar
           path: out/
